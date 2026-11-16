@@ -5,8 +5,18 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import (
+    ActionResult,
+    EntryPayload,
+    PageResult,
+    ResumeWritebackPayload,
+)
 from app.services.metric import MetricService
+from app.services.offset_resume import (
+    OffsetResumeError,
+    OffsetResumeNotFoundError,
+    offset_resume_service,
+)
 
 router = APIRouter(prefix="/api/metric", tags=["流作业指标采集"])
 
@@ -28,6 +38,38 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/resume-dataset")
+def read_resume_dataset(
+    source_code: str | None = Query(default=None, description="按源编号过滤续做批次"),
+) -> dict[str, Any]:
+    """指标采集页面与流数据源页面共用同一份位点续做数据集。"""
+    items = offset_resume_service.list_batches(source_code=source_code)
+    return {"module": "offset_resume", "total": len(items), "items": items}
+
+
+@router.get("/resume-dataset/effective-offsets")
+def read_effective_offsets() -> dict[str, Any]:
+    """指标采集处理结果只选择当前生效的位点续做数据集，同一分区不重复消费。"""
+    return {"items": offset_resume_service.effective_offsets()}
+
+
+@router.post("/resume-dataset/{dataset_id}/writeback")
+def writeback_resume(dataset_id: int, payload: ResumeWritebackPayload) -> dict[str, Any]:
+    """消费侧回写自身处理结果；与流数据源侧写的是同一份数据集，竞态只允许一项生效。"""
+    try:
+        record = offset_resume_service.writeback(
+            dataset_id,
+            payload.source_code,
+            result=payload.result,
+            last_offset=payload.last_offset,
+        )
+    except OffsetResumeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OffsetResumeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "message": "指标采集消费侧结果已回写位点续做数据集", "entry": record}
 
 
 @router.get("/{entry_id}", response_model=dict)

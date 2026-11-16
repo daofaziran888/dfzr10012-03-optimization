@@ -49,7 +49,7 @@ npm run dev
 
 | 模块 | 目录 | 业务对象 | 主要字段 |
 | --- | --- | --- | --- |
-| 流数据源接入 | `streamin` | 流数据源 | 源编号、源名称、消息队列 |
+| 流数据源接入 | `streamin` | 流数据源/位点续做数据集 | 源编号、源名称、消息队列、最后确认位点、批次数据集ID、幂等键 |
 | 流处理算子 | `operator` | 算子定义 | 算子编号、算子名称、输入流 |
 | 窗口计算配置 | `window` | 窗口定义 | 窗口编号、数据流名称、窗口类型 |
 | 状态后端管理 | `state` | 后端配置 | 配置编号、后端类型、存储路径 |
@@ -72,6 +72,23 @@ npm run dev
   `backend/app/routers/<模块>.py`，业务规则在 `backend/app/services/<模块>.py`。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 批量暂停与位点续做数据集
+
+流数据源批量暂停的 offset 确认与失败恢复统一由 `app/services/offset_resume.py` 收口，
+结果写入内存仓库的 `offset_resume` 表（位点续做数据集），流数据源页面与流作业指标采集
+页面共用同一份：
+
+- `POST /api/streamin/batch-pause`：整组源逐项确认 offset，同 `idem_key` 重复提交只生效
+  一次、只确认一个 offset；批次结果区分成功项、失败项、待处理项。
+- 批次中断时已完成分区保持确认位置不动，失败/待处理分区的源状态随快照一起退回未完成
+  边界；续做数据集保留失败分区和最后确认位置，续做批次从该位置起步、不重放。
+- `GET /api/streamin/resume`、`GET /api/streamin/resume/effective-offsets`：读取续做批次
+  与当前唯一生效位点。暂停前最后位点与批次检查点冲突时只认续做数据集，同一分区不重复
+  消费。
+- `POST /api/metric/resume-dataset/{id}/writeback`：指标采集消费侧向同一份数据集回写
+  自身结果；已成功分区的重复/竞态回写返回 409，只允许一项生效。
+- 验收脚本：`backend/tests/test_offset_resume.py`（`python -I tests/test_offset_resume.py`）。
 
 领域：数据工程
 子方向：数仓与数据湖

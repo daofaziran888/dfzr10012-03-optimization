@@ -28,6 +28,28 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class BatchPausePayload(BaseModel):
+    """流数据源批量暂停请求。
+
+    source_ids 为本批次包含的流数据源 id；idem_key 为批次幂等键，重复提交相同键只
+    生效一次；offsets 为各源本批次拟确认的检查点位点；fail_simulation 仅用于演示失败
+    分区与续做边界，传入的源 id 会模拟 offset 确认失败。
+    """
+
+    source_ids: list[int] = Field(default_factory=list)
+    idem_key: str
+    offsets: dict[str, int] = Field(default_factory=dict)
+    fail_simulation: list[int] = Field(default_factory=list)
+
+
+class ResumeWritebackPayload(BaseModel):
+    """消费侧（指标采集页面）向位点续做数据集回写自身处理结果。"""
+
+    source_code: str
+    result: str
+    last_offset: int | None = None
+
+
 
 class StreaminEntry(BaseModel):
     """流数据源明细结构。"""
